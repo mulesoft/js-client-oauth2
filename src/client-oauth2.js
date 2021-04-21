@@ -8,7 +8,7 @@ var btoa
 if (typeof Buffer === 'function') {
   btoa = btoaBuffer
 } else {
-  btoa = window.btoa
+  btoa = window.btoa.bind(window)
 }
 
 /**
@@ -161,13 +161,19 @@ function createUri (options, tokenType) {
   // Check the required parameters are set.
   expects(options, 'clientId', 'authorizationUri')
 
-  return options.authorizationUri + '?' + Querystring.stringify(Object.assign({
+  const qs = {
     client_id: options.clientId,
     redirect_uri: options.redirectUri,
-    scope: sanitizeScope(options.scopes),
     response_type: tokenType,
     state: options.state
-  }, options.query))
+  }
+  if (options.scopes !== undefined) {
+    qs.scope = sanitizeScope(options.scopes)
+  }
+
+  const sep = options.authorizationUri.includes('?') ? '&' : '?'
+  return options.authorizationUri + sep + Querystring.stringify(
+    Object.assign(qs, options.query))
 }
 
 /**
@@ -415,18 +421,22 @@ OwnerFlow.prototype.getToken = function (username, password, opts) {
   var self = this
   var options = Object.assign({}, this.client.options, opts)
 
+  const body = {
+    username: username,
+    password: password,
+    grant_type: 'password'
+  }
+  if (options.scopes !== undefined) {
+    body.scope = sanitizeScope(options.scopes)
+  }
+
   return this.client._request(requestOptions({
     url: options.accessTokenUri,
     method: 'POST',
     headers: Object.assign({}, DEFAULT_HEADERS, {
       Authorization: auth(options.clientId, options.clientSecret)
     }),
-    body: {
-      scope: sanitizeScope(options.scopes),
-      username: username,
-      password: password,
-      grant_type: 'password'
-    }
+    body: body
   }, options))
     .then(function (data) {
       return self.client.createToken(data)
@@ -528,16 +538,21 @@ CredentialsFlow.prototype.getToken = function (opts) {
 
   expects(options, 'clientId', 'clientSecret', 'accessTokenUri')
 
+  const body = {
+    grant_type: 'client_credentials'
+  }
+
+  if (options.scopes !== undefined) {
+    body.scope = sanitizeScope(options.scopes)
+  }
+
   return this.client._request(requestOptions({
     url: options.accessTokenUri,
     method: 'POST',
     headers: Object.assign({}, DEFAULT_HEADERS, {
       Authorization: auth(options.clientId, options.clientSecret)
     }),
-    body: {
-      scope: sanitizeScope(options.scopes),
-      grant_type: 'client_credentials'
-    }
+    body: body
   }, options))
     .then(function (data) {
       return self.client.createToken(data)
@@ -621,10 +636,15 @@ CodeFlow.prototype.getToken = function (uri, opts) {
   // `client_id`: REQUIRED, if the client is not authenticating with the
   // authorization server as described in Section 3.2.1.
   // Reference: https://tools.ietf.org/html/rfc6749#section-3.2.1
-  if (options.clientSecret) {
-    headers.Authorization = auth(options.clientId, options.clientSecret)
-  } else {
+  if (options.clientCredentialsInBody) {
     body.client_id = options.clientId
+    body.client_secret = options.clientSecret
+  } else {
+    if (options.clientSecret) {
+      headers.Authorization = auth(options.clientId, options.clientSecret)
+    } else {
+      body.client_id = options.clientId
+    }
   }
 
   return this.client._request(requestOptions({
@@ -669,15 +689,20 @@ JwtBearerFlow.prototype.getToken = function (token, opts) {
     headers.Authorization = auth(options.clientId, options.clientSecret)
   }
 
+  const body = {
+    grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+    assertion: token
+  }
+
+  if (options.scopes !== undefined) {
+    body.scope = sanitizeScope(options.scopes)
+  }
+
   return this.client._request(requestOptions({
     url: options.accessTokenUri,
     method: 'POST',
     headers: headers,
-    body: {
-      scope: sanitizeScope(options.scopes),
-      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-      assertion: token
-    }
+    body: body
   }, options))
     .then(function (data) {
       return self.client.createToken(data)
